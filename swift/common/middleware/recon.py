@@ -15,6 +15,7 @@
 
 import errno
 import os
+import pkg_resources
 from swift import gettext_ as _
 
 from swift import __version__ as swiftver
@@ -58,6 +59,10 @@ class ReconMiddleware(object):
         self.rings = [self.account_ring_path, self.container_ring_path,
                       self.object_ring_path]
         self.mount_check = config_true_value(conf.get('mount_check', 'true'))
+        self.pluginpath = conf.get('pluginpath', 'swiftrecon.plugin')
+        self.plugins = []
+        for ep in pkg_resources.iter_entry_points(group=self.pluginpath):
+            self.plugins.append(ep.load()())
 
     def _from_recon_cache(self, cache_keys, cache_file, openr=open):
         """retrieve values from a recon cache file
@@ -321,6 +326,26 @@ class ReconMiddleware(object):
             content = self.get_socket_info()
         elif rcheck == "version":
             content = self.get_version()
+        elif rcheck == "plugin":
+            if not self.plugins:
+                content = "Invalid path: %s" % req.path
+                return Response(request=req, status="404 Not Found",
+                                body=content, content_type="text/plain")
+            try:
+                rplugin = req.path.split('/')[3]
+                content = None
+                for plugin in self.plugins:
+                    if plugin.name == rplugin:
+                        content = plugin.get_info(req.path)
+                if content is None:
+                    content = "Invalid plugin path: %s" % req.path
+                    return Response(request=req, status="404 Not Found",
+                                    body=content, content_type="text/plain")
+            except IndexError:
+                available_plugins = []
+                for plugin in self.plugins:
+                    available_plugins.append(plugin.name)
+                    content = {'available_plugins': available_plugins}
         else:
             content = "Invalid path: %s" % req.path
             return Response(request=req, status="404 Not Found",
